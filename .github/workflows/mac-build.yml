@@ -1,0 +1,59 @@
+name: Build Mac app
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+    paths: ["yourtime-mac/**"]
+  pull_request:
+    paths: ["yourtime-mac/**"]
+
+jobs:
+  build:
+    runs-on: macos-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build (unsigned)
+        working-directory: yourtime-mac/YourTime
+        run: |
+          xcodebuild \
+            -project YourTime.xcodeproj \
+            -scheme YourTime \
+            -configuration Release \
+            -derivedDataPath build \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO
+
+      - name: Zip .app
+        working-directory: yourtime-mac/YourTime
+        run: |
+          APP_PATH=$(find build -name "YourTime.app" | head -1)
+          zip -r YourTime.zip "$APP_PATH"
+
+      # Upload as artifact on every build
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: YourTime-unsigned
+          path: yourtime-mac/YourTime/YourTime.zip
+          retention-days: 7
+
+      # Create GitHub Release only on version tags
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: yourtime-mac/YourTime/YourTime.zip
+          name: YourTime ${{ github.ref_name }}
+          body: |
+            ## Installation
+
+            1. Download `YourTime.zip` and unzip it
+            2. Move `YourTime.app` to your Applications folder
+            3. On first launch: right-click → Open (required because the app is unsigned)
+
+            > **Note:** This is an unsigned build. macOS will show a security warning.
+            > To build a signed version, clone the repo and build with Xcode.

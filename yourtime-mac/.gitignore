@@ -1,0 +1,72 @@
+# Xcode
+#
+# gitignore contributors: origins at https://github.com/github/gitignore
+
+## Build results
+build/
+DerivedData/
+
+## Project settings
+xcuserdata/
+
+## Personal settings
+.personal
+
+## UserState
+##
+# This is used for Xcode's persistent UI state.
+# You can usually ignore this.
+UserInterfaceState.xcuserstate
+
+## Schemes
+##
+# It is generally recommended to share schemes with your team.
+# However, you may want to ignore them if you are working on a private project.
+# stefano.xcuserdatad/xcschemes
+
+## Backup & Trash
+*.bak
+*.tmp
+*.swp
+*~
+
+## macOS
+##
+# General
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Icon must end with two \r
+Icon
+
+
+# Thumbnails
+._*
+
+# Files that might appear in the root of a volume
+.DocumentRevisions-V100
+.Spotlight-V100
+.Trashes
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+
+# Directories potentially created on remote AFP share
+.AppleDB
+.AppleDesktop
+Network Trash Folder
+Temporary Items
+.apdisk
+
+## Swift
+##
+# Swift Package Manager
+.build/
+.swiftpm/
+
+## App Specific
+.yourtime/
+window-monitor.csv
+
+# AI assistant notes
+GEMINI.md
