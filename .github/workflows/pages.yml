@@ -1,0 +1,102 @@
+name: Deploy GitHub Pages
+
+on:
+  workflow_run:
+    workflows: ["Build Mac app"]
+    types: [completed]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install tools
+        run: |
+          pip install mistune
+          curl -sSfL \
+            https://github.com/orhun/git-cliff/releases/download/v2.4.0/git-cliff-2.4.0-x86_64-unknown-linux-musl.tar.gz \
+            | tar -xz --strip-components=1 -C /tmp
+          sudo mv /tmp/git-cliff /usr/local/bin/git-cliff
+
+      - name: Get latest tag metadata
+        id: meta
+        run: |
+          LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+          RELEASE_DATE=$(git log -1 --format=%cs "$LATEST_TAG" 2>/dev/null || date +%Y-%m-%d)
+          echo "tag=$LATEST_TAG" >> "$GITHUB_OUTPUT"
+          echo "date=$RELEASE_DATE" >> "$GITHUB_OUTPUT"
+
+      - name: Build pages output
+        env:
+          TAG: ${{ steps.meta.outputs.tag }}
+          DATE: ${{ steps.meta.outputs.date }}
+        run: |
+          git cliff --output /tmp/CHANGELOG.md
+          python3 - <<'PYEOF'
+          import os, mistune, pathlib, shutil
+
+          tag = os.environ["TAG"]
+          date = os.environ["DATE"]
+
+          md = pathlib.Path("/tmp/CHANGELOG.md").read_text()
+
+          # Keep only the first 3 release sections
+          parts = md.split("\n## ")
+          header = parts[0]
+          entries = parts[1:4]
+          trimmed_md = header + ("\n## " + "\n## ".join(entries) if entries else "")
+          changelog_html = mistune.html(trimmed_md)
+
+          # Add icons to group headings so users can tell which app was improved
+          GROUP_ICONS = {
+              "Mac App": "🍎",
+              "Web Dashboard": "🌐",
+              "CI / Build": "⚙️",
+              "General": "📦",
+          }
+          for name, icon in GROUP_ICONS.items():
+              changelog_html = changelog_html.replace(
+                  f"<h3>{name}</h3>",
+                  f'<h3><span class="cl-group-icon">{icon}</span>{name}</h3>',
+              )
+
+          changelog_html += (
+              '<p class="cl-more">'
+              '<a href="https://github.com/esseti/yourtime/blob/main/CHANGELOG.md">'
+              'View full changelog on GitHub →'
+              '</a></p>'
+          )
+
+          shutil.copytree("docs", "/tmp/pages-out")
+          out = pathlib.Path("/tmp/pages-out/index.html")
+          content = out.read_text()
+          content = content.replace("{{VERSION}}", tag)
+          content = content.replace("{{RELEASE_DATE}}", date)
+          content = content.replace("{{CHANGELOG_HTML}}", changelog_html)
+          out.write_text(content)
+          PYEOF
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: /tmp/pages-out/
+
+      - uses: actions/deploy-pages@v4
+        id: deployment
