@@ -22,6 +22,142 @@ import { isAuthenticated, loadAuthTokens } from "@/lib/googleAuth";
 
 const DATA_DIR = path.join(process.cwd(), "data");
 const SETTINGS_FILE = path.join(DATA_DIR, "settings.json");
+const CACHE_FILE = path.join(DATA_DIR, ".scores_cache.json");
+
+interface ScoresCache {
+  version: number;
+  csvMtimes: Record<string, number>;
+  settingsMtime: number;
+  dates: string[];
+  scores: Record<string, number>;
+}
+
+async function loadCache(): Promise<ScoresCache | null> {
+  try {
+    const content = await fs.readFile(CACHE_FILE, "utf-8");
+    return JSON.parse(content) as ScoresCache;
+  } catch {
+    return null;
+  }
+}
+
+async function saveCache(cache: ScoresCache): Promise<void> {
+  await fs.writeFile(CACHE_FILE, JSON.stringify(cache));
+}
+
+async function isCacheValid(cache: ScoresCache): Promise<boolean> {
+  try {
+    const files = await fs.readdir(DATA_DIR);
+    const csvFiles = files.filter((f) => f.endsWith(".csv"));
+
+    if (csvFiles.length !== Object.keys(cache.csvMtimes).length) return false;
+
+    for (const file of csvFiles) {
+      const stat = await fs.stat(path.join(DATA_DIR, file));
+      const mtime = stat.mtimeMs;
+      if (cache.csvMtimes[file] !== mtime) return false;
+    }
+
+    try {
+      const stat = await fs.stat(SETTINGS_FILE);
+      if (cache.settingsMtime !== stat.mtimeMs) return false;
+    } catch {
+      if (cache.settingsMtime !== 0) return false;
+    }
+
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function buildCache(): Promise<ScoresCache> {
+  const { processEvents } = await import("@/lib/csvProcessor");
+  const { calculateDayScore } = await import("@/lib/scoreCalculator");
+
+  await ensureDataDir();
+  const files = await fs.readdir(DATA_DIR);
+  const csvFiles = files.filter((f) => f.endsWith(".csv"));
+
+  const csvMtimes: Record<string, number> = {};
+  const dateEventsMap = new Map<string, { timestamp: number; appName: string; details: string; domain?: string }[]>();
+
+  for (const file of csvFiles) {
+    const filePath = path.join(DATA_DIR, file);
+    const [content, stat] = await Promise.all([
+      fs.readFile(filePath, "utf-8"),
+      fs.stat(filePath),
+    ]);
+    csvMtimes[file] = stat.mtimeMs;
+
+    const results = Papa.parse(content, { skipEmptyLines: true });
+    const data = results.data as string[][];
+
+    let startIndex = 0;
+    if (data.length > 0) {
+      const firstCell = data[0][0]?.toLowerCase();
+      if (firstCell && (firstCell.includes("time") || firstCell.includes("date"))) {
+        startIndex = 1;
+      }
+    }
+
+    for (let i = startIndex; i < data.length; i++) {
+      const row = data[i];
+      if (row.length >= 2) {
+        const dateStr = row[0];
+        const timestamp = new Date(dateStr).getTime();
+        if (!isNaN(timestamp)) {
+          const d = new Date(timestamp);
+          const ds = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+
+          if (!dateEventsMap.has(ds)) dateEventsMap.set(ds, []);
+
+          const appName = row[1]?.trim() || "Unknown App";
+          const details = row[2]?.trim() || "";
+          let domain: string | undefined;
+          const extraDetails = row[3]?.trim();
+          if (extraDetails && extraDetails.startsWith("http")) {
+            try {
+              domain = new URL(extraDetails).hostname;
+            } catch { /* ignore */ }
+          }
+          dateEventsMap.get(ds)!.push({ timestamp, appName, details, domain });
+        }
+      }
+    }
+  }
+
+  let settingsMtime = 0;
+  try {
+    const stat = await fs.stat(SETTINGS_FILE);
+    settingsMtime = stat.mtimeMs;
+  } catch { /* no settings file */ }
+
+  const settings = await getSettings();
+  const scores: Record<string, number> = {};
+  const dates = Array.from(dateEventsMap.keys()).sort((a, b) => b.localeCompare(a));
+
+  for (const [date, rawEvents] of dateEventsMap) {
+    rawEvents.sort((a, b) => a.timestamp - b.timestamp);
+    const events = processEvents(rawEvents);
+    if (events.length > 0) {
+      scores[date] = calculateDayScore(events, settings);
+    }
+  }
+
+  return { version: 1, csvMtimes, settingsMtime, dates, scores };
+}
+
+export async function getDatesAndScores(): Promise<{ dates: string[]; scores: Record<string, number> }> {
+  await ensureDataDir();
+  const cached = await loadCache();
+  if (cached && await isCacheValid(cached)) {
+    return { dates: cached.dates, scores: cached.scores };
+  }
+  const fresh = await buildCache();
+  await saveCache(fresh);
+  return { dates: fresh.dates, scores: fresh.scores };
+}
 
 async function ensureDataDir() {
   try {
@@ -41,6 +177,7 @@ export async function uploadCsvFile(formData: FormData) {
   const filePath = path.join(DATA_DIR, safeName);
 
   await fs.writeFile(filePath, buffer);
+  await fs.rm(CACHE_FILE, { force: true });
   return { success: true, fileName: safeName };
 }
 

@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { getAvailableDates, uploadCsvFile, getDayScore } from "@/app/actions";
+import { uploadCsvFile, getDatesAndScores } from "@/app/actions";
 import { getScoreColor, getScoreLabel } from "@/lib/scoreCalculator";
 import {
   format,
@@ -29,18 +29,8 @@ export default function Home() {
 
   const fetchDates = async () => {
     try {
-      const dates = await getAvailableDates();
+      const { dates, scores } = await getDatesAndScores();
       setAvailableDates(dates);
-
-      const scores: Record<string, number> = {};
-      await Promise.all(
-        dates.map(async (date) => {
-          const score = await getDayScore(date);
-          if (score !== null) {
-            scores[date] = score;
-          }
-        }),
-      );
       setDayScores(scores);
     } catch (err) {
       console.error("Failed to fetch dates", err);
